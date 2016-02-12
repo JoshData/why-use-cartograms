@@ -1,0 +1,4 @@
+pyshp
+git+https://github.com/noamraph/tqdm@master
+git+https://github.com/python-imaging/Pillow@2.4.0
+pyproj
