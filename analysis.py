@@ -1,13 +1,19 @@
 # Analze the pixel and population data.
 
-import csv
-from numpy import median
+import csv, colorsys
 from PIL import Image, ImageDraw, ImageFont
 
-# Load demographic data.
+raster_width = 800
+font_ttf_file = '/usr/share/fonts/truetype/gentium/GenR102.ttf'
+
+# Load demographic data. Turn numeric columns into floats (rather than strings).
 demographics = csv.DictReader(open("tract_population.csv"))
 demographics = {
-	(tract["state"] + tract["county"] + tract["tract"]): tract
+	(tract["state"] + tract["county"] + tract["tract"]): {
+		k: float(v) if v != "" else None
+		for (k, v) in tract.items()
+		if k not in ("state", "county", "tract")
+	}
 	for tract in demographics
 }
 
@@ -18,134 +24,196 @@ prezelection = {
 	for row in prezelection
 }
 
-# Get median income across tracts.
-median_income = median(list(float(tract["median_income"]) for tract in demographics.values() if tract["median_income"] != ""))
+# Compute how many pixels each tract is assigned to. When multiple tracts
+# share a pixel, apportion the pixel evenly to those tracts.
+tract_pixels = { }
+for x, y, *tracts in csv.reader(open("tract_pixels_%d.csv" % raster_width)):
+	# Drop tracts with no residents & pixels with no residents.
+	tracts = [t for t in tracts if demographics[t]["population"] > 0]
+	if len(tracts) == 0: continue
 
-# Plot.
-width = 800
-height = 500
-img = Image.new("L", (width, height), 0)
-
-total_pixels = 0
-total_tracts = 0
-
-total_population = 0
-total_white_population = 0
-total_white_pixels = 0
-
-total_median_income_pixels = 0
-total_below_median_income_pixels = 0
-
-total_working_population = 0
-total_public_transit_population = 0
-total_public_transit_pixels = 0
-
-total_female_population = 0
-total_female_married_population = 0
-total_female_married_pixels = 0
-
-total_housing_units = 0
-total_housing_units_singledetached = 0
-total_housing_units_singledetached_pixels = 0
-
-total_voted = 0
-total_voted_obama = 0
-total_voted_obama_pixels = 0
-
-# Get some population totals across tracts.
-for tract in demographics.values():
-	total_population += int(tract["population"])
-	total_white_population += int(tract["white"])
-	total_working_population += int(tract["all_transit"])
-	total_public_transit_population += int(tract["public_transit"])
-	total_female_population += int(tract["all_female_marital"])
-	total_female_married_population += int(tract["female_married"])
-	total_housing_units += int(tract["housing_units"])
-	total_housing_units_singledetached += int(tract["housing_units_single_detached"])
-	total_tracts += 1
-
-# Get presidential totals across counties.
-for county in prezelection.values():
-	total_voted += float(county["TTL_VT"])
-	total_voted_obama += float(county["OBAMA"])
-
-tract_pixel_counts = { tract: 0 for tract in demographics }
-
-# Analyze distribution in pixels.
-for x, y, *tracts in csv.reader(open("tract_pixels_800.csv")):
-	total_pixels += 1
-
-	val = 0
+	# Apportion a part of this pixel to the tracts that are drawn on it.
 	for tract in tracts:
-		tract_pixel_counts[tract] += 1/len(tracts)
+		tract_pixels[tract] = tract_pixels.get(tract, 0) + 1/len(tracts)
 
-		# Race.
-		if int(demographics[tract]["population"]) > 0:
-			total_white_pixels += (1.0 / len(tracts)) * (int(demographics[tract]["white"]) / int(demographics[tract]["population"]))
+print(len(tract_pixels), "tracts")
+print(int(round(sum(tract_pixels.values()))), "pixels")
 
-		# Income.
-		if demographics[tract]["median_income"] != "":
-			total_median_income_pixels += (1.0 / len(tracts))
-			if float(demographics[tract]["median_income"]) < median_income:
-				total_below_median_income_pixels += (1.0 / len(tracts))
+########################################################################
 
-		# Transit.
-		if int(demographics[tract]["all_transit"]) > 0:
-			total_public_transit_pixels += (1.0 / len(tracts)) * (int(demographics[tract]["public_transit"]) / int(demographics[tract]["all_transit"]))
+# DISTORTION
 
-		# Married women.
-		if int(demographics[tract]["all_female_marital"]) > 0:
-			total_female_married_pixels += (1.0 / len(tracts)) * (int(demographics[tract]["female_married"]) / int(demographics[tract]["all_female_marital"]))
+def compute_distortion(title, f_numerator, f_denominator):
+	# Compare a population demographic to how that demographic appears
+	# when proportined to pixels in the map.
 
-		# Single detached housing units.
-		if int(demographics[tract]["housing_units"]) > 0:
-			total_housing_units_singledetached_pixels += (1.0 / len(tracts)) * (int(demographics[tract]["housing_units_single_detached"]) / int(demographics[tract]["housing_units"]))
-			val += (1.0 / len(tracts)) * (int(demographics[tract]["housing_units_single_detached"]) / int(demographics[tract]["housing_units"]))
+	numerator_population = 0
+	denominator_population = 0
+	numerator_pixels = 0
+	denominator_pixels = 0
 
-		# Voted for Obama.
-		prez = prezelection[tract[0:5]]
-		if float(prez["TTL_VT"]) > 0:
-			total_voted_obama_pixels += (1.0 / len(tracts)) * (float(prez["OBAMA"]) / float(prez["TTL_VT"]))
+	for tract, pixels in tract_pixels.items():
+		# Compute the numerator and denominator for a demographic statistic.
+		n = f_numerator(tract)
+		d = f_denominator(tract)
 
-	img.putpixel((int(x),int(y)), int(round(255*val)))
+		# For things other than whole population, the denominator might
+		# be zero in some places. There are no relevant people for this
+		# statistic in this tract.
+		if d == 0: continue
 
-img.save("map.png", format="png")
+		# Make a grand total.
+		numerator_population += n
+		denominator_population += d
 
-print("pixels", total_pixels)
-print("tracts", total_tracts)
-print()
-print("population", total_population)
-print("white population", total_white_population, round(1000*total_white_population/total_population)/10)
-print("white pixels", total_white_pixels, round(1000*total_white_pixels/total_pixels)/10)
-print()
-print("pixels with median income known", int(round(total_median_income_pixels)))
-print("pixels below median income", int(round(total_below_median_income_pixels)), round(1000*total_below_median_income_pixels/total_median_income_pixels)/10)
-print()
-print("working_population", total_working_population)
-print("working + public transit population", total_public_transit_population, round(1000*total_public_transit_population/total_working_population)/10)
-print("working + public transit pixels", int(round(total_public_transit_pixels)), round(1000*total_public_transit_pixels/total_pixels)/10)
-print()
-print("female population", total_female_population)
-print("female married population", total_female_married_population, round(1000*total_female_married_population/total_female_population)/10)
-print("female married pixels", int(round(total_female_married_pixels)), round(1000*total_female_married_pixels/total_pixels)/10)
-print()
-print("housing units", total_housing_units)
-print("single detached housing units", total_housing_units_singledetached, round(1000*total_housing_units_singledetached/total_housing_units)/10)
-print("single detached pixels", int(round(total_housing_units_singledetached_pixels)), round(1000*total_housing_units_singledetached_pixels/total_pixels)/10)
-print()
-print("voted", total_voted)
-print("voted obama population", total_voted_obama, round(1000*total_voted_obama/total_voted)/10)
-print("voted obama pixels", int(round(total_voted_obama_pixels)), round(1000*total_voted_obama_pixels/total_pixels)/10)
+		# Apportion the pixels this tract is drawn on according to the
+		# demographics in this tract.
+		numerator_pixels += (n/d) * pixels
+		denominator_pixels += pixels
 
-tract_order = sorted(tract_pixel_counts, key = lambda tract : int(demographics[tract]["population"]) / (tract_pixel_counts[tract] or 1), reverse=True)
-population = 0
-pixels = 0
-histogram = []
-for tract in tract_order:
-	population += int(demographics[tract]["population"])
-	pixels += tract_pixel_counts[tract]
-	histogram.append((population/total_population, pixels/total_pixels))
-	if pixels/total_pixels > .1:
-		print(population/total_population, pixels/total_pixels)
-		break
-#print(max(histogram, key=lambda h : h[0]-h[1]))
+	print("population %", round(numerator_population/denominator_population*1000)/10)
+	print("pixels %", round(numerator_pixels/denominator_pixels*1000)/10)
+	print("(total population", int(round(denominator_population)), "; total pixels", int(round(denominator_pixels)), ")")
+
+########################################################################
+
+def draw_map(title, pct_pop_to_draw, func, png_file):
+	# Highly where X% of the population lives on a map.
+
+	# Assign a rank order to the tracts to put the population
+	# compactly into few tracts, along some dimension.
+	tract_rank = { }
+	total = sum(func(tract) for tract in tract_pixels.keys())
+	tracts = sorted(tract_pixels.keys(), key=lambda tract : -func(tract) / tract_pixels[tract])
+	running_total = 0
+	for tract in tracts:
+		running_total += func(tract)
+		tract_rank[tract] = (func(tract), running_total/total)
+
+	# Plot.
+	height = int(raster_width * 500/800)
+	img = Image.new("RGBA", (raster_width, height), (0, 0, 0, 0))
+	total_units = set()
+	total_pixels = 0
+	total_hot_units = set()
+	total_hot_pixels = 0
+	for x, y, *tracts in csv.reader(open("tract_pixels_%d.csv" % raster_width)):
+		# Drop tracts with no residents & pixels with no residents.
+		tracts = [t for t in tracts if demographics[t]["population"] > 0]
+		if len(tracts) == 0: continue
+
+		# How many pixels are in the map?
+		total_pixels += 1
+
+		# Get the proportion of tracts at this pixel that
+		# are above the threshold to plot.
+		v = 0.0
+		for tract in tracts:
+			total_units.add(tract)
+			if tract_rank[tract][1] <= pct_pop_to_draw:
+				# 90% of population
+				total_hot_units.add(tract)
+				total_hot_pixels += 1/len(tracts)
+				v += 1/len(tracts)
+
+		# Rescale the proportion of this pixel that is lit up [0, 1]
+		# to a saturation value.
+		saturation = .1 + .8*v
+		lightness = 0.9 - .3*v # actually HSV's "value"
+
+		# Draw.
+		r, g, b = colorsys.hsv_to_rgb(0.15, saturation, lightness)
+		value = (int(255*r), int(255*g), int(220*b), 255)
+		img.putpixel((int(x),int(y)), value)
+
+	# Finish computations.
+	total_units = sum(tract_rank[tract][0] for tract in total_units)
+	total_hot_units = sum(tract_rank[tract][0] for tract in total_hot_units)
+
+	# Legend.
+	fnt = ImageFont.truetype(font_ttf_file, int(height/22))
+	draw = ImageDraw.Draw(img)
+	y = [.8*height]
+	line_height = 1.33 * draw.textsize("Hg", font=fnt)[1]
+	def write_line(text, y):
+		draw.text((raster_width/50,y[0]), text, font=fnt, fill=(30,30,30,255))
+		y[0] += line_height
+	write_line(title + ":", y)
+	write_line("%d%% of the population" % int(round(total_hot_units/total_units*1000)/10), y)
+	write_line("lives in %s%% of the map" % int(round(total_hot_pixels/total_pixels*1000)/10), y)
+
+	# Save.
+	img.save(png_file, format="png")
+
+	print("total population units", int(round(total_units)))
+	print("total displayed population units", int(round(total_hot_units)), int(round(total_hot_units/total_units*1000)/10))
+	print("total pixels", int(round(total_pixels)))
+	print("total displayed population pixels", int(round(total_hot_pixels)), int(round(total_hot_pixels/total_pixels*1000)/10))
+
+########################################################################
+
+def go(title, numerator, denominator, pct_pop_to_draw, map_png_file):
+	print()
+	print(title)
+	if denominator: compute_distortion(title, numerator, denominator)
+	draw_map(title, pct_pop_to_draw, numerator, map_png_file)
+
+########################################################################
+
+go(
+	"all people",
+	lambda tract : demographics[tract]["population"],
+	None,
+	.95,
+	"all.png")
+
+go(
+	"non-whites",
+	lambda tract : demographics[tract]["population"] - demographics[tract]["white"],
+	lambda tract : demographics[tract]["population"],
+	.95,
+	"non_whites.png")
+
+go(
+	"use public transit",
+	lambda tract : demographics[tract]["public_transit"],
+	lambda tract : demographics[tract]["all_workers"],
+	.95,
+	"public_transit.png")
+
+median_income = 53150 # yields 50%
+go(
+	"household income < $%d" % int(round(median_income)),
+	lambda tract : demographics[tract]["population"] if demographics[tract]["median_income"] is not None and demographics[tract]["median_income"] <= median_income else 0,
+	lambda tract : demographics[tract]["population"],
+	.95,
+	"income.png")
+
+go(
+	"in poverty",
+	lambda tract : demographics[tract]["in_poverty"],
+	lambda tract : demographics[tract]["poverty_status_denominator"],
+	.95,
+	"poverty.png")
+
+go(
+	"multi-unit housing structures",
+	lambda tract : demographics[tract]["housing_units"] - demographics[tract]["housing_units_single_detached"],
+	lambda tract : demographics[tract]["housing_units"],
+	.95,
+	"multi_unit_homes.png")
+
+# we have county-level totals, but since we're plotting tracts it's
+# easier to apportion the county percentages to the tracts
+go(
+	"voted for Obama in 2012",
+	lambda tract : float(prezelection[tract[0:5]]["PCT_OBM"])/100 * demographics[tract]["population"],
+	lambda tract : demographics[tract]["population"],
+	.95,
+	"obama.png")
+go(
+	"voted for Romney in 2012",
+	lambda tract : float(prezelection[tract[0:5]]["PCT_ROM"])/100 * demographics[tract]["population"],
+	lambda tract : demographics[tract]["population"],
+	.95,
+	"romney.png")

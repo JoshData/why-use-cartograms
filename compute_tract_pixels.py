@@ -98,9 +98,23 @@ for sf, shape, fields in \
 	# img.getdata() returns a flat array of the pixels in raster order,
 	# by row (or whatever). By enumerating, each pixel gets a consistent
 	# integer identifier.
+	is_drawn = False
 	for pixel, value in enumerate(img.getdata()):
 		if value > 0: # really just 255 so long as there is no antialiasing
+			if value != 255: raise Exception("encountered a pixel value that's not 0 or 255")
 			pixels[pixel].append(tract_id)
+			is_drawn = True
+
+	if not is_drawn:
+		# Tract was too small to be represented in the raster image at all.
+		# That means it's smaller than one pixel. All of the points on the
+		# polygon will probably round to the same coordinate. But to be
+		# sure, take the average of the coordinates and mark the tract
+		# as being drawn at that one lump location.
+		x = int(round(sum(latlng[0] for latlng in polygon)/len(polygon)))
+		y = int(round(sum(latlng[1] for latlng in polygon)/len(polygon)))
+		pixel = y*width + x
+		pixels[pixel].append(tract_id)
 
 	# Release object.
 	del draw
@@ -111,7 +125,7 @@ img_all.save("map_%d.png" % width, format="png")
 # Write out each pixel that got lit up at all and the tract IDs that did so.
 import csv
 w = csv.writer(sys.stdout)
-for pixel_id, tract_list in pixels.items():
+for pixel_id, tract_list in sorted(pixels.items()):
 	x = (pixel_id % width)
 	y = pixel_id // width
 	w.writerow([x, y] + tract_list)

@@ -15,9 +15,11 @@ fields = {
 	"B01003_001E": "population",
 	"B02001_002E": "white", # white alone
 	
-  "B06011_001E": "median_income", # Median Income in the Past 12 Months (in 2014 Inflation-Adjusted Dollars) 
+  "B19013_001E": "median_income", # Median Household Income in the Past 12 Months (in 2014 Inflation-Adjusted Dollars) 
+  "B17001_001E": "poverty_status_denominator", # Poverty Status in the past 12 Months.
+  "B17001_002E": "in_poverty", # Income in the past 12 months below poverty level
   
-  "B08006_001E": "all_transit", # Means of Transportation to Work - total population that works?
+  "B08006_001E": "all_workers", # Means of Transportation to Work - total population that works?
   "B08006_008E": "public_transit", # Public transportation (excluding taxicab)
   "B08006_014E": "bike", # Bicycle
   "B08006_015E": "walked", # Walked
