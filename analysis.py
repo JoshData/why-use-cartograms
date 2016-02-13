@@ -1,20 +1,24 @@
 # Analze the pixel and population data.
 
-import csv, colorsys
+import sys, csv, colorsys
 from PIL import Image, ImageDraw, ImageFont
 
+# Settings.
+unit = sys.argv[1]
 raster_width = 800
 font_ttf_file = '/usr/share/fonts/truetype/gentium/GenR102.ttf'
 
 # Load demographic data. Turn numeric columns into floats (rather than strings).
-demographics = csv.DictReader(open("tract_population.csv"))
+# Map each row from a GEOID that concatenates the state, county, and tract FIPS IDs.
+demographics = csv.DictReader(open("%s_population.csv" % unit))
 demographics = {
-	(tract["state"] + tract["county"] + tract["tract"]): {
-		k: float(v) if v != "" else None
-		for (k, v) in tract.items()
-		if k not in ("state", "county", "tract")
-	}
-	for tract in demographics
+	(item["state"] + item["county"] + (item["tract"] if unit=="tract" else "")):
+		{
+			k: float(v) if v != "" else None
+			for (k, v) in item.items()
+			if k not in ("state", "county", "tract")
+		}
+	for item in demographics
 }
 
 # Load 2012 presidential election data.
@@ -24,20 +28,20 @@ prezelection = {
 	for row in prezelection
 }
 
-# Compute how many pixels each tract is assigned to. When multiple tracts
-# share a pixel, apportion the pixel evenly to those tracts.
-tract_pixels = { }
-for x, y, *tracts in csv.reader(open("tract_pixels_%d.csv" % raster_width)):
-	# Drop tracts with no residents & pixels with no residents.
-	tracts = [t for t in tracts if demographics[t]["population"] > 0]
-	if len(tracts) == 0: continue
+# Compute how many pixels each geographic unit is assigned to. When multiple units
+# share a pixel, apportion the pixel evenly to those units.
+unit_pixel_count = { }
+for x, y, *units in csv.reader(open("%s_pixels_%d.csv" % (unit, raster_width))):
+	# Drop geographic units with no residents & pixels with no residents.
+	units = [t for t in units if demographics[t]["population"] > 0]
+	if len(units) == 0: continue
 
-	# Apportion a part of this pixel to the tracts that are drawn on it.
-	for tract in tracts:
-		tract_pixels[tract] = tract_pixels.get(tract, 0) + 1/len(tracts)
+	# Apportion a part of this pixel to the units that are drawn on it.
+	for item in units:
+		unit_pixel_count[item] = unit_pixel_count.get(item, 0) + 1/len(units)
 
-print(len(tract_pixels), "tracts")
-print(int(round(sum(tract_pixels.values()))), "pixels")
+print(len(unit_pixel_count), unit, "count")
+print(int(round(sum(unit_pixel_count.values()))), "pixels")
 
 ########################################################################
 
@@ -52,22 +56,22 @@ def compute_distortion(title, f_numerator, f_denominator):
 	numerator_pixels = 0
 	denominator_pixels = 0
 
-	for tract, pixels in tract_pixels.items():
+	for item, pixels in unit_pixel_count.items():
 		# Compute the numerator and denominator for a demographic statistic.
-		n = f_numerator(tract)
-		d = f_denominator(tract)
+		n = f_numerator(item)
+		d = f_denominator(item)
 
 		# For things other than whole population, the denominator might
 		# be zero in some places. There are no relevant people for this
-		# statistic in this tract.
+		# statistic in this item.
 		if d == 0: continue
 
 		# Make a grand total.
 		numerator_population += n
 		denominator_population += d
 
-		# Apportion the pixels this tract is drawn on according to the
-		# demographics in this tract.
+		# Apportion the pixels this item is drawn on according to the
+		# demographics in this item.
 		numerator_pixels += (n/d) * pixels
 		denominator_pixels += pixels
 
@@ -80,15 +84,15 @@ def compute_distortion(title, f_numerator, f_denominator):
 def draw_map(title, pct_pop_to_draw, func, png_file):
 	# Highly where X% of the population lives on a map.
 
-	# Assign a rank order to the tracts to put the population
-	# compactly into few tracts, along some dimension.
-	tract_rank = { }
-	total = sum(func(tract) for tract in tract_pixels.keys())
-	tracts = sorted(tract_pixels.keys(), key=lambda tract : -func(tract) / tract_pixels[tract])
+	# Assign a rank order to the geographic units to put the population
+	# compactly into a tight space, along some dimension.
+	unit_rank = { }
+	total = sum(func(item) for item in unit_pixel_count.keys())
+	sorted_units = sorted(unit_pixel_count.keys(), key=lambda item : -func(item) / unit_pixel_count[item])
 	running_total = 0
-	for tract in tracts:
-		running_total += func(tract)
-		tract_rank[tract] = (func(tract), running_total/total)
+	for item in sorted_units:
+		running_total += func(item)
+		unit_rank[item] = (func(item), running_total/total)
 
 	# Plot.
 	height = int(raster_width * 500/800)
@@ -97,24 +101,24 @@ def draw_map(title, pct_pop_to_draw, func, png_file):
 	total_pixels = 0
 	total_hot_units = set()
 	total_hot_pixels = 0
-	for x, y, *tracts in csv.reader(open("tract_pixels_%d.csv" % raster_width)):
-		# Drop tracts with no residents & pixels with no residents.
-		tracts = [t for t in tracts if demographics[t]["population"] > 0]
-		if len(tracts) == 0: continue
+	for x, y, *units in csv.reader(open("%s_pixels_%d.csv" % (unit, raster_width))):
+		# Drop geographic units with no residents & pixels with no residents.
+		units = [t for t in units if demographics[t]["population"] > 0]
+		if len(units) == 0: continue
 
 		# How many pixels are in the map?
 		total_pixels += 1
 
-		# Get the proportion of tracts at this pixel that
+		# Get the proportion of geographic units at this pixel that
 		# are above the threshold to plot.
 		v = 0.0
-		for tract in tracts:
-			total_units.add(tract)
-			if tract_rank[tract][1] <= pct_pop_to_draw:
+		for item in units:
+			total_units.add(item)
+			if unit_rank[item][1] <= pct_pop_to_draw:
 				# 90% of population
-				total_hot_units.add(tract)
-				total_hot_pixels += 1/len(tracts)
-				v += 1/len(tracts)
+				total_hot_units.add(item)
+				total_hot_pixels += 1/len(units)
+				v += 1/len(units)
 
 		# Rescale the proportion of this pixel that is lit up [0, 1]
 		# to a saturation value.
@@ -127,8 +131,8 @@ def draw_map(title, pct_pop_to_draw, func, png_file):
 		img.putpixel((int(x),int(y)), value)
 
 	# Finish computations.
-	total_units = sum(tract_rank[tract][0] for tract in total_units)
-	total_hot_units = sum(tract_rank[tract][0] for tract in total_hot_units)
+	total_units = sum(unit_rank[item][0] for item in total_units)
+	total_hot_units = sum(unit_rank[item][0] for item in total_hot_units)
 
 	# Legend.
 	fnt = ImageFont.truetype(font_ttf_file, int(height/22))
@@ -162,58 +166,72 @@ def go(title, numerator, denominator, pct_pop_to_draw, map_png_file):
 
 go(
 	"all people",
-	lambda tract : demographics[tract]["population"],
+	lambda item : demographics[item]["population"],
+	None,
+	.5,
+	"all_50.png")
+
+go(
+	"all people",
+	lambda item : demographics[item]["population"],
 	None,
 	.95,
-	"all.png")
+	"all_95.png")
+
+go(
+	"all people",
+	lambda item : demographics[item]["population"],
+	None,
+	.99,
+	"all_99.png")
 
 go(
 	"non-whites",
-	lambda tract : demographics[tract]["population"] - demographics[tract]["white"],
-	lambda tract : demographics[tract]["population"],
+	lambda item : demographics[item]["population"] - demographics[item]["white"],
+	lambda item : demographics[item]["population"],
 	.95,
 	"non_whites.png")
 
 go(
 	"use public transit",
-	lambda tract : demographics[tract]["public_transit"],
-	lambda tract : demographics[tract]["all_workers"],
+	lambda item : demographics[item]["public_transit"],
+	lambda item : demographics[item]["all_workers"],
 	.95,
 	"public_transit.png")
 
-median_income = 53150 # yields 50%
+median_income = 53150 if unit == "tract" else 53350 # yields 50%
 go(
 	"household income < $%d" % int(round(median_income)),
-	lambda tract : demographics[tract]["population"] if demographics[tract]["median_income"] is not None and demographics[tract]["median_income"] <= median_income else 0,
-	lambda tract : demographics[tract]["population"],
+	lambda item : demographics[item]["population"] if demographics[item]["median_income"] is not None and demographics[item]["median_income"] <= median_income else 0,
+	lambda item : demographics[item]["population"],
 	.95,
 	"income.png")
 
 go(
 	"in poverty",
-	lambda tract : demographics[tract]["in_poverty"],
-	lambda tract : demographics[tract]["poverty_status_denominator"],
+	lambda item : demographics[item]["in_poverty"],
+	lambda item : demographics[item]["poverty_status_denominator"],
 	.95,
 	"poverty.png")
 
 go(
 	"multi-unit housing structures",
-	lambda tract : demographics[tract]["housing_units"] - demographics[tract]["housing_units_single_detached"],
-	lambda tract : demographics[tract]["housing_units"],
+	lambda item : demographics[item]["housing_units"] - demographics[item]["housing_units_single_detached"],
+	lambda item : demographics[item]["housing_units"],
 	.95,
 	"multi_unit_homes.png")
 
-# we have county-level totals, but since we're plotting tracts it's
+# we have county-level totals, but when we're plotting tracts it's
 # easier to apportion the county percentages to the tracts
 go(
 	"voted for Obama in 2012",
-	lambda tract : float(prezelection[tract[0:5]]["PCT_OBM"])/100 * demographics[tract]["population"],
-	lambda tract : demographics[tract]["population"],
+	lambda item : float(prezelection[item[0:5]]["PCT_OBM"])/100 * demographics[item]["population"],
+	lambda item : demographics[item]["population"],
 	.95,
 	"obama.png")
 go(
 	"voted for Romney in 2012",
-	lambda tract : float(prezelection[tract[0:5]]["PCT_ROM"])/100 * demographics[tract]["population"],
-	lambda tract : demographics[tract]["population"],
+	lambda item : float(prezelection[item[0:5]]["PCT_ROM"])/100 * demographics[item]["population"],
+	lambda item : demographics[item]["population"],
 	.95,
 	"romney.png")
